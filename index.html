@@ -194,6 +194,8 @@ nav{justify-content:center}nav b{position:absolute;left:clamp(1rem,4vw,3rem)}
 .fbk i{position:absolute;top:34%;width:13%;height:28%;border-radius:99px;background:#1c0509}
 .fbk i:first-child{left:31%}.fbk i:last-child{left:56%}
 .lorb.gl .fbk{display:none}
+.lmo{position:absolute;left:50%;z-index:3;transform:translateX(-50%);padding:.6rem 1.1rem;border-radius:99px;border:1px solid rgba(252,250,251,.4);background:rgba(252,250,251,.14);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:#fff;font:600 .68rem/1 Archivo,sans-serif;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;opacity:0;transition:opacity .5s .6s}
+.lmo.show{opacity:.9}.lmo:active{opacity:1}
 
 /* v7: glass logo reveal */
 .glr{position:relative;height:clamp(16rem,52vw,28rem);margin:0 auto 1rem;cursor:pointer;background:var(--c4)}
@@ -357,7 +359,7 @@ nav{justify-content:center}nav b{position:absolute;left:clamp(1rem,4vw,3rem)}
 
 <section class="ct" id="contact">
   <div class="rings" aria-hidden="true"><i class="rg" style="--s:34vmin"></i><i class="rg" style="--s:60vmin"></i><i class="rg" style="--s:90vmin"></i><i class="rg" style="--s:125vmin"></i></div>
-  <div class='lorb' role='img' aria-label='A friendly orb whose eyes follow your cursor'><div class='fbk'><i></i><i></i></div><canvas></canvas></div>
+  <div class='lorb' role='img' aria-label='A friendly orb whose eyes follow your cursor or your phone’s tilt'><div class='fbk'><i></i><i></i></div><canvas></canvas></div>
   <p class="eyebrow" style="color:var(--c3);position:relative;z-index:2">Contact</p>
   <h2 class="rv">Let’s make something <span class="heat">move</span></h2>
   <p>Dhaka, Bangladesh · open to new projects</p>
@@ -545,13 +547,14 @@ void main(){
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform3f(U('u_body'),.988,.98,.984);gl.uniform3f(U('u_eye'),.11,.02,.035);
   box.classList.add('pre','gl');
-  var reduce=matchMedia('(prefers-reduced-motion:reduce)').matches,on=false,raf=0,last=0,clock=0,look={x:0,y:.08},tgt={x:0,y:.08},gz={x:0,y:.08},pAt=-1e9,nextB=1800+Math.random()*2400,bAt=-1e4,nextG=700;
+  var reduce=matchMedia('(prefers-reduced-motion:reduce)').matches,on=false,raf=0,last=0,clock=0,look={x:0,y:.08},tgt={x:0,y:.08},gz={x:0,y:.08},pAt=-1e9,nextB=1800+Math.random()*2400,bAt=-1e4,nextG=700,G={has:false,b:0,g:0,base:null,ang:0,fx:0,fy:0},sensorOK=false,listening=false,pill=null;
   function size(){var d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.floor(box.clientWidth*d));if(cv.width!==w){cv.width=cv.height=w}gl.viewport(0,0,cv.width,cv.height)}
   function draw(now,live){
     var dt=live?Math.min(50,now-last):0;last=now;clock+=dt;
-    var steer=now-pAt<3000;
-    if(!steer&&live&&clock>=nextG){var back=Math.random()<.3;gz.x=back?0:(Math.random()*2-1)*.8;gz.y=back?.08:(Math.random()*2-1)*.5;nextG=clock+900+Math.random()*2100}
-    var goal=steer?tgt:reduce?{x:0,y:.08}:gz,ease=live?(steer?.16:.1):1;
+    var steer=now-pAt<3000,gy=!reduce&&G.has&&listening;
+    if(gy)gyro(live?dt||16:16);
+    if(!steer&&!gy&&live&&clock>=nextG){var back=Math.random()<.3;gz.x=back?0:(Math.random()*2-1)*.8;gz.y=back?.08:(Math.random()*2-1)*.5;nextG=clock+900+Math.random()*2100}
+    var goal=steer?tgt:gy?gz2:reduce?{x:0,y:.08}:gz,ease=live?(steer?.16:.1):1;
     look.x+=(goal.x-look.x)*ease;look.y+=(goal.y-look.y)*ease;
     if(!reduce&&clock>=nextB){bAt=clock;nextB=clock+2200+Math.random()*3800}
     var bt=(clock-bAt)/1000,b=0;if(!reduce)b=bt<.055?bt/.055:bt<.1?1:bt<.18?1-(bt-.1)/.08:0;
@@ -559,12 +562,53 @@ void main(){
   }
   function tick(now){raf=0;draw(now,true);if(on&&!document.hidden)raf=requestAnimationFrame(tick)}
   function wake(){if(raf||reduce||!on)return;last=performance.now();raf=requestAnimationFrame(tick)}
-  addEventListener('pointermove',function(e){var r=box.getBoundingClientRect();tgt.x=Math.max(-1,Math.min(1,(e.clientX-(r.left+r.width/2))/(r.width/2)));tgt.y=Math.max(-1,Math.min(1,(r.top+r.height/2-e.clientY)/(r.height/2)));pAt=performance.now();wake()},{passive:true});
-  document.addEventListener('visibilitychange',wake);
+  addEventListener('pointermove',function(e){if(G.has&&listening&&e.pointerType!=='mouse')return;var r=box.getBoundingClientRect();tgt.x=Math.max(-1,Math.min(1,(e.clientX-(r.left+r.width/2))/(r.width/2)));tgt.y=Math.max(-1,Math.min(1,(r.top+r.height/2-e.clientY)/(r.height/2)));pAt=performance.now();wake()},{passive:true});
+
+  // ---- Gyroscope: DeviceOrientation -> the same look vector the pointer drives -------------------
+  var gz2={x:0,y:.08},RANGE=22,DZ=1.6,SMOOTH_TAU=70;   // degrees of tilt for a full look; dead zone (deg); low-pass time constant (ms)
+  function wrap(d){return d>180?d-360:d<-180?d+360:d}
+  function screenAngle(){var a=screen.orientation&&typeof screen.orientation.angle==='number'?screen.orientation.angle:(typeof window.orientation==='number'?window.orientation:0);return((a%360)+360)%360}
+  function onOri(e){if(e.beta==null||e.gamma==null)return;G.b=e.beta;G.g=e.gamma;if(!G.has){G.has=true;hidePill()}wake()}   // handler only stores values; all maths runs once per frame
+  function gyro(dt){
+    var a=screenAngle();
+    if(!G.base||G.ang!==a){G.base={b:G.b,g:G.g};G.ang=a;G.fx=G.fy=0}                 // first sample / screen rotation / orb scrolled back into view: this hold is "neutral"
+    var db=wrap(G.b-G.base.b),dg=G.g-G.base.g;
+    var x,y;                                                                           // rotate device axes into screen axes
+    if(a===90){x=db;y=-dg}else if(a===180){x=-dg;y=-db}else if(a===270){x=-db;y=dg}else{x=dg;y=db}
+    var m=Math.hypot(x,y);if(m<DZ){x=y=0}else{var sc=(m-DZ)/m;x*=sc;y*=sc}             // soft dead zone: no jump when leaving it
+    x/=RANGE;y/=RANGE;var n=Math.hypot(x,y);if(n>1){x/=n;y/=n}                          // keep inside the same circular limit the pointer uses
+    var f=1-Math.exp(-dt/SMOOTH_TAU);G.fx+=(x-G.fx)*f;G.fy+=(y-G.fy)*f;                 // damping; the shared easing in draw() adds the spring-like follow
+    gz2.x=G.fx;gz2.y=.08+G.fy;
+  }
+  function sync(){
+    var want=sensorOK&&on&&!document.hidden&&!reduce;
+    if(want&&!listening){G.has=false;G.base=null;addEventListener('deviceorientation',onOri,true);listening=true}
+    else if(!want&&listening){removeEventListener('deviceorientation',onOri,true);listening=false}
+  }
+  function placePill(){if(pill)pill.style.top=Math.max(8,box.offsetTop-pill.offsetHeight-12)+'px'}
+  function hidePill(){if(!pill)return;var p=pill;pill=null;p.classList.remove('show');setTimeout(function(){p.remove()},700)}
+  function initSensors(){
+    if(reduce||typeof DeviceOrientationEvent==='undefined')return;
+    sensorOK=true;                                                                     // Android Chrome etc.: no prompt needed; desktop fires only null events, which onOri ignores
+    var ask=DeviceOrientationEvent.requestPermission;
+    if(typeof ask!=='function'||!matchMedia('(pointer:coarse)').matches)return;
+    pill=document.createElement('button');pill.type='button';pill.className='lmo';pill.textContent='Enable motion';
+    pill.setAttribute('aria-label','Enable motion so the orb’s eyes follow your phone’s tilt');
+    box.parentNode.appendChild(pill);placePill();requestAnimationFrame(function(){if(pill)pill.classList.add('show')});
+    pill.addEventListener('click',function(){                                          // must be called straight from the tap (iOS user-gesture rule)
+      var req;try{req=ask.call(DeviceOrientationEvent)}catch(_){req=Promise.reject()}
+      Promise.resolve(req).then(function(r){if(r==='granted'){sync()}else{sensorOK=false;sync();hidePill()}},function(){sensorOK=false;sync();hidePill()});
+    });
+    // already granted earlier in this session? then events arrive on their own and onOri hides the pill
+  }
+  addEventListener('resize',placePill,{passive:true});
+  addEventListener('pagehide',function(){sensorOK=false;sync()});
+  addEventListener('pageshow',function(e){if(e.persisted&&!reduce&&typeof DeviceOrientationEvent!=='undefined'){sensorOK=true;sync()}});
+  document.addEventListener('visibilitychange',function(){sync();wake()});
   new ResizeObserver(function(){size();if(!raf)draw(performance.now(),false)}).observe(box);
-  new IntersectionObserver(function(en){on=en[0].isIntersecting;if(on){box.classList.add('in');size();if(reduce)draw(performance.now(),false);else wake()}}).observe(box);
+  new IntersectionObserver(function(en){on=en[0].isIntersecting;sync();if(on){box.classList.add('in');size();if(reduce)draw(performance.now(),false);else wake()}}).observe(box);
   cv.addEventListener('webglcontextlost',function(e){e.preventDefault();box.classList.remove('gl');on=false});
-  size();
+  size();initSensors();sync();
 })();
 </script>
 <script>
